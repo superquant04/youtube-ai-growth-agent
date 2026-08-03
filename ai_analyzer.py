@@ -11,12 +11,18 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # AI가 반드시 따라야 하는 출력 스키마 (프롬프트에도 그대로 포함시켜 강제)
 OUTPUT_SCHEMA_EXAMPLE = {
+    "thumbnail_observations": [
+        {
+            "video_title": "영상 제목 (표에 있는 것과 동일하게)",
+            "observation": "실제로 이 썸네일 이미지를 보고 관찰한 내용 (텍스트 양, 글자 크기, 얼굴 유무, 색상/대비, 복잡도 등 구체적으로)"
+        }
+    ],
     "verification": {
         "is_baseline": False,
         "summary": "이전 가설이 지지되었는지에 대한 데이터 기반 판단 (2~4문장)",
         "supporting_metrics": ["CTR이 5.8%에서 6.1%로 상승", "AVD가 2배 증가"]
     },
-    "question": "현재 데이터에서 발견된 가장 아쉬운 점이나 파고들 기회 (1~2문장)",
+    "question": "현재 데이터와 썸네일 관찰에서 발견된 가장 아쉬운 점이나 파고들 기회 (1~2문장)",
     "hypothesis": {
         "variable_a": "바꿀 변수 (예: 썸네일 텍스트 크기)",
         "change": "구체적으로 어떻게 바꿀지",
@@ -37,6 +43,10 @@ OUTPUT_SCHEMA_EXAMPLE = {
     }
 }
 
+# 한 번의 분석에서 실제로 이미지를 보내 분석할 최대 영상 수
+# (너무 많이 보내면 비용/응답시간이 커지므로 최신 영상 위주로 제한)
+MAX_THUMBNAILS_TO_ANALYZE = 8
+
 
 def build_previous_context(last):
     """이전 기록을 프롬프트에 넣을 텍스트로 변환."""
@@ -52,48 +62,78 @@ def build_previous_context(last):
 이 가설이 이번 데이터로 지지되는지 구체적 수치로 판단하고 verification.is_baseline은 false로 설정하세요."""
 
 
+def build_thumbnail_message_content(df_recent_videos, max_images=MAX_THUMBNAILS_TO_ANALYZE):
+    """
+    최근 영상들의 썸네일 이미지를 GPT-4o에 함께 보낼 수 있는 형태(content 리스트)로 만듭니다.
+    OpenAI Vision 입력은 {"type": "image_url", "image_url": {"url": ...}} 형태를 사용하며,
+    공개 URL을 그대로 넘기면 별도 base64 인코딩 없이 처리됩니다.
+    """
+    content = []
+
+    if "thumbnail_url" not in df_recent_videos.columns:
+        return content
+
+    # 최신 영상 위주로 최대 max_images개만 전송 (비용/속도 관리)
+    subset = df_recent_videos.tail(max_images)
+
+    for _, row in subset.iterrows():
+        url = row.get("thumbnail_url")
+        if not url or pd.isna(url):
+            continue
+        content.append({"type": "text", "text": f"[영상 제목: {row['title']}] 썸네일:"})
+        content.append({"type": "image_url", "image_url": {"url": url}})
+
+    return content
+
+
 def generate_scientific_insight(df_recent_videos):
     """
-    최근 영상 데이터 + 이전 가설 히스토리를 바탕으로
+    최근 영상 데이터(통계 + 썸네일 이미지) + 이전 가설 히스토리를 바탕으로
     6단계 과학적 방법론을 적용한 인사이트를 JSON으로 생성합니다.
     반환값: (report_dict, report_markdown)
     """
     stats_context = df_recent_videos[
-        ['title', 'published_at', 'views', 'likes', 'comments', 'ctr', 'avd']
+        [c for c in ['title', 'published_at', 'views', 'likes', 'comments', 'ctr', 'avd']
+         if c in df_recent_videos.columns]
     ].to_markdown()
 
     last = database.load_last_hypothesis()
     previous_context = build_previous_context(last)
 
     system_prompt = f"""당신은 데이터 기반 유튜브 성장 해킹(Growth Hacking) 전문가이자 데이터 과학자입니다.
-제공된 유튜브 영상 통계 데이터를 분석하여 [과학적 실험 6단계 프레임워크]에 따라 인사이트를 도출하세요.
-막연한 추측이 아닌 오직 숫자 데이터에 근거해야 합니다.
+제공된 유튜브 영상 통계 데이터와 실제 썸네일 이미지를 함께 분석하여 [과학적 실험 6단계 프레임워크]에 따라 인사이트를 도출하세요.
+막연한 추측이 아닌 숫자 데이터와 실제로 눈으로 관찰한 썸네일 특징에 근거해야 합니다.
 
 {previous_context}
 
 [과학적 실험 6단계 프레임워크]
+0. thumbnail_observations (썸네일 관찰): 함께 제공된 각 영상의 썸네일 이미지를 실제로 보고, 텍스트 양/글자 크기/얼굴 유무/색상 대비/복잡도 등을 구체적으로 기술하세요. 절대 이미지를 보지 않은 것처럼 일반론으로 넘어가지 마세요.
 1. verification (검증): 이전 가설이 이번 데이터로 지지되는지 평가. 최초 분석이면 baseline 설정.
-2. question (질문): 데이터에서 발견된 가장 아쉬운 점이나 기회.
-3. hypothesis (가설): "만약 A를 C하면 B가 D할 것이다" 형태의 명확한 인과관계 가설.
+2. question (질문): 데이터와 썸네일 관찰에서 발견된 가장 아쉬운 점이나 기회.
+3. hypothesis (가설): "만약 A를 C하면 B가 D할 것이다" 형태의 명확한 인과관계 가설. 가능하면 썸네일 관찰 내용과 연결하세요.
 4. control (통제): 가설 검증을 위해 다음 영상에서 유지해야 할 조건들.
 5. execution (실행): 다음 영상 제작 시 즉시 실행할 구체적 행동 지침.
 6. measurement (관찰과 측정): 성과 판별을 위해 추적할 핵심 지표(KPI).
 
 반드시 아래 JSON 스키마와 정확히 동일한 키 구조로만 응답하세요.
 다른 설명, 마크다운, 코드블록 없이 순수 JSON 객체만 출력하세요.
+썸네일 이미지가 하나도 제공되지 않았다면 thumbnail_observations는 빈 배열로 두세요.
 
 스키마 예시:
 {json.dumps(OUTPUT_SCHEMA_EXAMPLE, ensure_ascii=False, indent=2)}
 """
 
-    user_prompt = f"다음은 최근 영상들의 성과 데이터입니다.\n\n{stats_context}\n\n이 데이터를 바탕으로 6단계 분석을 JSON으로 작성해 주세요."
+    user_text = f"다음은 최근 영상들의 성과 데이터입니다.\n\n{stats_context}\n\n이어서 각 영상의 썸네일 이미지를 순서대로 제공합니다. 이미지를 실제로 관찰한 뒤 6단계 분석을 JSON으로 작성해 주세요."
+
+    user_content = [{"type": "text", "text": user_text}]
+    user_content.extend(build_thumbnail_message_content(df_recent_videos))
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": user_content}
             ],
             temperature=0.3,
             response_format={"type": "json_object"}  # JSON 출력 강제
@@ -108,11 +148,12 @@ def generate_scientific_insight(df_recent_videos):
     except json.JSONDecodeError as e:
         raise RuntimeError(f"AI 응답 JSON 파싱 실패: {e}\n원문: {raw_text}")
 
-    # 필수 키 검증 (스키마 누락 방지)
+    # 필수 키 검증 (스키마 누락 방지). thumbnail_observations는 이미지가 없으면 빈 배열일 수 있어 완화 검증.
     required_keys = ["verification", "question", "hypothesis", "control", "execution", "measurement"]
     missing = [k for k in required_keys if k not in analysis]
     if missing:
         raise RuntimeError(f"AI 응답에 필수 키 누락: {missing}\n원문: {raw_text}")
+    analysis.setdefault("thumbnail_observations", [])
 
     latest_video_title = df_recent_videos.iloc[-1]['title'] if not df_recent_videos.empty else ""
     markdown_report = render_markdown(analysis)
@@ -131,7 +172,14 @@ def render_markdown(analysis):
     m = analysis["measurement"]
 
     lines = []
-    lines.append("### 1. 검증 (Verification)")
+
+    observations = analysis.get("thumbnail_observations", [])
+    if observations:
+        lines.append("### 0. 썸네일 관찰 (Thumbnail Observations)")
+        for obs in observations:
+            lines.append(f"- **{obs.get('video_title', '')}**: {obs.get('observation', '')}")
+
+    lines.append("\n### 1. 검증 (Verification)")
     if v.get("is_baseline"):
         lines.append(v.get("summary", "베이스라인 설정."))
     else:

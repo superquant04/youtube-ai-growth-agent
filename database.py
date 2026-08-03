@@ -44,10 +44,18 @@ def init_db():
                 comments INTEGER,
                 ctr TEXT,
                 avd TEXT,
+                thumbnail_url TEXT,
                 fetched_at TEXT NOT NULL,
                 UNIQUE(video_id, fetched_at)
             )
         """)
+
+        # 이미 존재하는(과거 버전으로 생성된) DB에는 thumbnail_url 컬럼이 없을 수 있으므로
+        # 없으면 추가한다 (있으면 에러 나므로 무시).
+        try:
+            conn.execute("ALTER TABLE video_stats ADD COLUMN thumbnail_url TEXT")
+        except sqlite3.OperationalError:
+            pass  # 이미 컬럼이 존재함
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS analyses (
@@ -91,8 +99,8 @@ def save_video_stats(df):
         for _, row in df.iterrows():
             conn.execute("""
                 INSERT OR IGNORE INTO video_stats
-                (video_id, title, published_at, views, likes, comments, ctr, avd, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (video_id, title, published_at, views, likes, comments, ctr, avd, thumbnail_url, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 row.get("video_id", row["title"]),
                 row["title"],
@@ -102,6 +110,7 @@ def save_video_stats(df):
                 int(row["comments"]),
                 str(row["ctr"]),
                 str(row["avd"]),
+                row.get("thumbnail_url"),
                 fetched_at,
             ))
 
@@ -191,7 +200,7 @@ def get_video_stats_history(limit=100):
     """대시보드용: 영상 성과 시계열 데이터 (트렌드 차트에 바로 사용 가능)."""
     with get_connection() as conn:
         rows = conn.execute("""
-            SELECT video_id, title, published_at, views, likes, comments, ctr, avd, fetched_at
+            SELECT video_id, title, published_at, views, likes, comments, ctr, avd, thumbnail_url, fetched_at
             FROM video_stats
             ORDER BY published_at ASC
             LIMIT ?

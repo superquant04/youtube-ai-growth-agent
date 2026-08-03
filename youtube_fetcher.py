@@ -150,6 +150,12 @@ def get_public_video_stats(youtube, video_ids):
     for item in response.get("items", []):
         snippet = item["snippet"]
         stats = item.get("statistics", {})
+        thumbnails = snippet.get("thumbnails", {})
+        thumbnail_url = (
+            thumbnails.get("high", {}).get("url")
+            or thumbnails.get("medium", {}).get("url")
+            or thumbnails.get("default", {}).get("url")
+        )
         results.append({
             "video_id": item["id"],
             "title": snippet["title"],
@@ -157,6 +163,7 @@ def get_public_video_stats(youtube, video_ids):
             "views": int(stats.get("viewCount", 0)),
             "likes": int(stats.get("likeCount", 0)),
             "comments": int(stats.get("commentCount", 0)),
+            "thumbnail_url": thumbnail_url,
         })
 
     return results
@@ -228,6 +235,7 @@ def fetch_recent_video_dataframe(max_results=10):
             "comments": video["comments"],
             "ctr": analytics["ctr"] or "N/A",
             "avd": analytics["avd"] or "N/A",
+            "thumbnail_url": video["thumbnail_url"],
         })
 
     # 오래된 순 -> 최신 순으로 정렬 (ai_analyzer.py가 마지막 행을 "최신 영상"으로 사용)

@@ -183,6 +183,15 @@ else:
             use_container_width=True
         )
 
+    if "thumbnail_url" in video_df.columns and video_df["thumbnail_url"].notna().any():
+        st.caption("🖼️ 최근 영상 썸네일")
+        recent = video_df.dropna(subset=["thumbnail_url"]).sort_values("published_at", ascending=False).head(6)
+        cols = st.columns(min(len(recent), 6))
+        for col, (_, row) in zip(cols, recent.iterrows()):
+            with col:
+                st.image(row["thumbnail_url"], use_container_width=True)
+                st.caption(row["title"][:30] + ("..." if len(row["title"]) > 30 else ""))
+
 st.divider()
 
 
