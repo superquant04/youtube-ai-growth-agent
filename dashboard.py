@@ -18,6 +18,8 @@ import plotly.express as px
 
 import database
 
+database.init_db()  # 스키마 마이그레이션(예: thumbnail_url 컬럼 추가) 보장
+
 st.set_page_config(
     page_title="YouTube AI Growth Hacking Agent",
     page_icon="🎥",
