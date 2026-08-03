@@ -1,0 +1,43 @@
+name: Scheduled YouTube Analysis
+
+# 매주 월요일 오전 9시(KST, UTC+9) 실행 = UTC 00:00
+# cron은 UTC 기준입니다. 필요에 따라 아래 schedule을 수정하세요.
+on:
+  schedule:
+    - cron: "0 0 * * 1"
+  workflow_dispatch:      # Actions 탭에서 수동 실행 버튼도 사용 가능
+
+permissions:
+  contents: write         # DB/리포트 변경사항을 저장소에 커밋하기 위해 필요
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 에이전트 파이프라인 실행
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: python main.py --max-results 10
+
+      - name: 변경된 DB/리포트 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add growth_agent.db reports/
+          git diff --staged --quiet || git commit -m "chore: 정기 분석 결과 업데이트 ($(date -u +'%Y-%m-%d'))"
+          git push
