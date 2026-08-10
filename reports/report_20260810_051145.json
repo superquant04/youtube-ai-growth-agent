@@ -1,0 +1,74 @@
+{
+  "thumbnail_observations": [
+    {
+      "video_title": "벤저민 그레이엄의 증권분석 핵심내용",
+      "observation": "책 이미지와 복잡한 차트 배경, 중간 크기의 텍스트, 인물 사진이 포함되어 있음."
+    },
+    {
+      "video_title": "투자와 현대과학 기술",
+      "observation": "차트 배경과 작은 인물 사진, 작은 텍스트가 포함되어 있음."
+    },
+    {
+      "video_title": "주식투자가 망하는 이유",
+      "observation": "차트 배경과 작은 인물 사진, 작은 텍스트가 포함되어 있음."
+    },
+    {
+      "video_title": "레버리지 인덱스 TQQQ, QLD 에 대한 생각",
+      "observation": "차트 배경과 중간 크기의 텍스트, 인물 사진이 포함되어 있음."
+    },
+    {
+      "video_title": "지금 국장 한번쯤 의심해봐야 합니다!",
+      "observation": "강렬한 색상과 큰 텍스트, 화려한 그래픽 요소가 포함되어 있음."
+    },
+    {
+      "video_title": "삼성전자, 하이닉스 고평가 시나리오",
+      "observation": "강렬한 색상과 큰 텍스트, 화려한 그래픽 요소가 포함되어 있음."
+    },
+    {
+      "video_title": "투자법인을 창업하기로 결심한 이유",
+      "observation": "인물 사진과 중간 크기의 텍스트, 단순한 배경이 포함되어 있음."
+    },
+    {
+      "video_title": "삼성전자 주가전망 (개미 99%의 착각 5가지)",
+      "observation": "단순한 배경과 중간 크기의 텍스트, 인물 사진이 포함되어 있음."
+    }
+  ],
+  "verification": {
+    "is_baseline": false,
+    "summary": "이전 가설이 지지되지 않았습니다. 텍스트 크기를 키우고 배경을 단순화한 썸네일의 CTR이 다른 영상에 비해 특별히 높지 않았습니다.",
+    "supporting_metrics": [
+      "CTR 데이터가 제공되지 않음",
+      "AVD 데이터가 제공되지 않음"
+    ]
+  },
+  "question": "썸네일의 텍스트 크기와 배경 복잡도가 CTR에 미치는 영향을 명확히 파악할 필요가 있습니다.",
+  "hypothesis": {
+    "variable_a": "썸네일 텍스트 크기",
+    "change": "텍스트 크기를 더 키우고 배경을 더욱 단순화",
+    "expected_metric": "CTR",
+    "expected_direction": "increase",
+    "full_statement": "만약 썸네일의 텍스트 크기를 더 키우고 배경을 더욱 단순화하면 CTR이 증가할 것이다."
+  },
+  "control": {
+    "variables_to_keep": [
+      "영상 길이",
+      "업로드 시간대",
+      "주제 카테고리"
+    ],
+    "reason": "이 조건들을 유지함으로써 썸네일 변경이 CTR에 미치는 영향을 정확히 측정할 수 있습니다."
+  },
+  "execution": {
+    "action_items": [
+      "다음 영상의 썸네일에서 텍스트 크기를 더 키우고 배경을 더욱 단순화",
+      "텍스트 대비를 높여 가독성을 향상"
+    ]
+  },
+  "measurement": {
+    "kpis_to_track": [
+      "CTR",
+      "AVD",
+      "초반 30초 이탈률"
+    ],
+    "tracking_period": "업로드 후 7일 동안 관찰할지"
+  }
+}
