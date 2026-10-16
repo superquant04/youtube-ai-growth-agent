@@ -1,14 +1,14 @@
 """
 industries.py
 
-랭킹 대상 산업 유니버스와 산업별 "AI 레버리지" 기본 가정치.
+랭킹 대상 산업 유니버스와 산업별 "AI 잠재력" 기본 가정치 (주가 미반영 점수 계산에 사용).
 
 각 산업은 다음 정보를 가집니다.
 - tickers        : 시장 신호를 읽을 대표 ETF(또는 대표 종목 바스켓, 동일가중)
 - news_keywords  : GDELT 뉴스 검색에 쓸 영어 키워드 (AI 키워드와 AND로 결합)
-- exposure/data/value/barrier : AI 레버리지를 구성하는 1~5점 정성 평가
+- exposure/data/value/barrier : AI 잠재력을 구성하는 1~5점 정성 평가
 
-AI 레버리지 4요소 (1~5점)
+AI 잠재력 4요소 (1~5점)
 - exposure (업무 노출도): 업무 중 인지·언어·데이터 처리 비중. 높을수록 AI가 대체/증강할 여지가 큼.
   (Eloundou et al. 2023 "GPTs are GPTs"에서 정보·금융·전문서비스 업종의 노출도가 가장 높게 나타난 경향을 참고)
 - data     (데이터 자산): 디지털화 수준과 학습에 쓸 수 있는 독점 데이터의 양.
@@ -29,7 +29,7 @@ BENCHMARK_ID = "__benchmark__"
 # GDELT는 2글자 단어("AI")를 단독 키워드로 받지 않으므로 풀네임 구문을 사용합니다.
 AI_NEWS_TERMS = ("artificial intelligence", "machine learning")
 
-# AI 레버리지 4요소의 가중치 (합계 1.0). barrier는 (6 - barrier)로 뒤집어 반영합니다.
+# AI 잠재력 4요소의 가중치 (합계 1.0). barrier는 (6 - barrier)로 뒤집어 반영합니다.
 LEVERAGE_FACTOR_WEIGHTS = {
     "exposure": 0.35,
     "data": 0.20,
@@ -68,7 +68,7 @@ class Industry:
 
 
 def compute_ai_leverage(exposure, data, value, barrier):
-    """1~5점 4요소를 0~100점 AI 레버리지 점수로 변환합니다."""
+    """1~5점 4요소를 0~100점 AI 잠재력 점수로 변환합니다."""
     w = LEVERAGE_FACTOR_WEIGHTS
     raw = (
         w["exposure"] * exposure

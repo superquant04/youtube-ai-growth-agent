@@ -36,10 +36,22 @@ def run_app():
     return at
 
 
-def test_app_renders_without_news(app_env):
+KPI_ORDER = ["🥇 현재 1위", "🎯 남은 반전 1위", "💎 주가 미반영 1위", "📈 시장 데이터 기준일"]
+
+
+def kpi_value(at, label):
+    """KPI 타일은 caption(라벨) + markdown('### 값')으로 그려지며 화면 맨 위 '### ' 블록 4개가 KPI 값입니다."""
+    assert any(c.value == label for c in at.caption), f"KPI '{label}' 없음"
+    values = [m.value.removeprefix("### ") for m in at.markdown if m.value.startswith("### ")]
+    return values[KPI_ORDER.index(label)]
+
+
+def test_app_renders_ranking(app_env):
     at = run_app()
-    assert any("1위" in m.label for m in at.metric)
-    assert any("뉴스 가중치를 제외" in i.value for i in at.info)
+    table = ranking.build_ranking(app_env, DEFAULT_WEIGHTS)
+    assert kpi_value(at, "🥇 현재 1위") == table.iloc[0]["name"]
+    assert kpi_value(at, "🎯 남은 반전 1위") == table.loc[table["remaining_reversal"].idxmax(), "name"]
+    assert kpi_value(at, "💎 주가 미반영 1위") == table.loc[table["unpriced"].idxmax(), "name"]
     assert len(at.dataframe) >= 2
 
 
@@ -47,25 +59,21 @@ def test_app_renders_with_cached_news_and_history(app_env):
     news = synthetic_news()
     for ind in INDUSTRIES:
         storage.save_news_timeline(ind.id, build_news_query(ind), news[ind.id])
-    table = ranking.build_ranking(app_env, DEFAULT_WEIGHTS, news_series=news)
-    storage.save_ranking_snapshot(table, {i.id: i.name for i in INDUSTRIES}, news_included=True)
+    table = ranking.build_ranking(app_env, DEFAULT_WEIGHTS)
+    storage.save_ranking_snapshot(table, {i.id: i.name for i in INDUSTRIES})
 
     at = run_app()
-    assert not any("뉴스 가중치를 제외" in i.value for i in at.info)
-    news_metric = next(m for m in at.metric if "뉴스" in m.label)
-    assert news_metric.value == f"{len(INDUSTRIES)}개 산업"
-    top_metric = next(m for m in at.metric if "1위" in m.label)
-    assert top_metric.value == table.iloc[0]["name"]
+    assert any("참고" in m.value and "뉴스 비중 추이" in m.value for m in at.markdown)
+    assert any("순위 추이" in m.value for m in at.markdown)
 
 
 def test_app_weight_change_reranks(app_env):
     at = run_app()
-    for comp in ("reversal_room", "turn_momentum", "news_momentum"):
-        at.slider(key=f"w_{comp}").set_value(0)
+    at.slider(key="w_remaining_reversal").set_value(0)
     at.run()
     assert not at.exception
-    top = max(INDUSTRIES, key=lambda i: i.ai_leverage)
-    assert next(m for m in at.metric if "1위" in m.label).value == top.name
+    table = ranking.build_ranking(app_env, {"remaining_reversal": 0, "unpriced": 100})
+    assert kpi_value(at, "🥇 현재 1위") == table.iloc[0]["name"]
 
 
 def test_app_shows_error_when_market_data_fails(app_env, monkeypatch):

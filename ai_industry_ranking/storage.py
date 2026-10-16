@@ -3,7 +3,7 @@ storage.py
 
 랭킹 스냅샷과 GDELT 뉴스 캐시를 저장하는 SQLite 저장소.
 
-1. news_timelines     -> 산업별 최신 뉴스 비중 시계열 (GDELT 요청 제한 때문에 캐시해서 재사용)
+1. news_timelines     -> 산업별 최신 뉴스 비중 시계열 (참고 정보, GDELT 요청 제한 때문에 캐시해서 재사용)
 2. ranking_snapshots  -> 랭킹 계산 결과 누적 (순위 변화 히스토리 차트용)
 
 DB 경로는 환경변수 INDUSTRY_RANKING_DB로 바꿀 수 있습니다.
@@ -23,8 +23,8 @@ DB_FILE = os.getenv(
 )
 
 SNAPSHOT_COLUMNS = [
-    "rank", "total_score", "ai_leverage", "reversal_room", "turn_momentum", "news_momentum",
-    "phase", "ret_1m", "ret_3m", "rel_2y", "drawdown_3y", "news_change",
+    "rank", "total_score", "remaining_reversal", "unpriced", "ai_leverage", "priced_in",
+    "phase", "upside_to_high", "rel_2y", "rel_12m", "rebound_52w", "ret_1m",
 ]
 
 
@@ -59,17 +59,16 @@ def init_db(db_file=None):
                 industry_name TEXT NOT NULL,
                 rank INTEGER,
                 total_score REAL,
+                remaining_reversal REAL,
+                unpriced REAL,
                 ai_leverage REAL,
-                reversal_room REAL,
-                turn_momentum REAL,
-                news_momentum REAL,
+                priced_in REAL,
                 phase TEXT,
-                ret_1m REAL,
-                ret_3m REAL,
+                upside_to_high REAL,
                 rel_2y REAL,
-                drawdown_3y REAL,
-                news_change REAL,
-                news_included INTEGER NOT NULL DEFAULT 0
+                rel_12m REAL,
+                rebound_52w REAL,
+                ret_1m REAL
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_created ON ranking_snapshots(created_at)")
@@ -103,7 +102,7 @@ def load_news_timelines(db_file=None):
     return result
 
 
-def save_ranking_snapshot(table, industry_names, news_included, created_at=None, db_file=None):
+def save_ranking_snapshot(table, industry_names, created_at=None, db_file=None):
     """rank_industries() 결과를 한 시점의 스냅샷으로 저장합니다."""
     created_at = created_at or utc_now_iso()
     rows = []
@@ -115,15 +114,14 @@ def save_ranking_snapshot(table, industry_names, news_included, created_at=None,
             industry_id,
             industry_names.get(industry_id, industry_id),
             *[_to_db(row.get(c)) for c in SNAPSHOT_COLUMNS],
-            1 if news_included else 0,
         ))
 
-    placeholders = ", ".join(["?"] * (4 + len(SNAPSHOT_COLUMNS) + 1))
+    placeholders = ", ".join(["?"] * (4 + len(SNAPSHOT_COLUMNS)))
     with get_connection(db_file) as conn:
         conn.executemany(f"""
             INSERT INTO ranking_snapshots (
                 created_at, market_date, industry_id, industry_name,
-                {", ".join(SNAPSHOT_COLUMNS)}, news_included
+                {", ".join(SNAPSHOT_COLUMNS)}
             ) VALUES ({placeholders})
         """, rows)
     return created_at

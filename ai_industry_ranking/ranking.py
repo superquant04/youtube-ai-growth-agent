@@ -3,6 +3,9 @@ ranking.py
 
 수집(market_data, news_data) -> 점수화(scoring) -> 저장(storage)을 잇는 오케스트레이션 계층.
 Streamlit 앱(industry_ranking_app.py)과 CLI(collect.py)가 공통으로 사용합니다.
+
+점수는 시장 데이터와 AI 잠재력 가정치만으로 계산합니다.
+GDELT 뉴스는 산업 상세 화면의 참고 정보로만 쓰이며 점수에는 들어가지 않습니다.
 """
 
 import numpy as np
@@ -22,22 +25,13 @@ def fetch_market_indices(period="5y"):
     return market_data.build_industry_indices(close)
 
 
-def news_metrics_frame(news_series, as_of=None):
-    if not news_series:
-        return None
-    rows = {iid: news_data.compute_news_metrics(s, as_of=as_of) for iid, s in news_series.items()}
-    frame = pd.DataFrame.from_dict(rows, orient="index")
-    return frame if not frame.empty else None
-
-
-def build_ranking(indices, weights, news_series=None, ai_leverage=None, as_of=None, compare_days=5):
+def build_ranking(indices, weights, ai_leverage=None, as_of=None, compare_days=5):
     """
     산업 랭킹 테이블을 계산합니다.
 
     indices      : fetch_market_indices() 결과
-    weights      : {구성요소: 가중치}
-    news_series  : {산업 id: 일별 뉴스 비중 Series} 또는 None (뉴스 신호 제외)
-    ai_leverage  : 사용자가 수정한 AI 레버리지 점수 Series (없으면 기본 가정치)
+    weights      : {구성요소: 가중치} (scoring.COMPONENTS)
+    ai_leverage  : 사용자가 수정한 AI 잠재력 점수 Series (없으면 기본 가정치)
     compare_days : 순위 변동 비교 기준 (거래일 수, 5 = 1주 전)
     """
     ai_leverage = default_ai_leverage() if ai_leverage is None else ai_leverage
@@ -49,11 +43,11 @@ def build_ranking(indices, weights, news_series=None, ai_leverage=None, as_of=No
         raise market_data.MarketDataError("계산할 가격 데이터가 없습니다.")
     as_of = dates[-1]
 
-    table = _rank_at(indices, weights, news_series, ai_leverage, as_of)
+    table = _rank_at(indices, weights, ai_leverage, as_of)
 
     prev_as_of = dates[-1 - compare_days] if len(dates) > compare_days else None
     if prev_as_of is not None:
-        prev = _rank_at(indices, weights, news_series, ai_leverage, prev_as_of)
+        prev = _rank_at(indices, weights, ai_leverage, prev_as_of)
         table["prev_rank"] = prev["rank"].reindex(table.index)
         table["prev_total_score"] = prev["total_score"].reindex(table.index)
     else:
@@ -70,15 +64,14 @@ def build_ranking(indices, weights, news_series=None, ai_leverage=None, as_of=No
     return table
 
 
-def _rank_at(indices, weights, news_series, ai_leverage, as_of):
+def _rank_at(indices, weights, ai_leverage, as_of):
     metrics = market_data.compute_all_metrics(indices, as_of=as_of)
-    nm = news_metrics_frame(news_series, as_of=as_of)
-    return scoring.rank_industries(metrics, ai_leverage, weights, nm)
+    return scoring.rank_industries(metrics, ai_leverage, weights)
 
 
 def refresh_news(industries=INDUSTRIES, progress_cb=None, db_file=None):
     """
-    전 산업의 GDELT 뉴스 시계열을 새로 받아 DB에 저장합니다 (요청 제한으로 산업당 약 5.5초).
+    전 산업의 GDELT 뉴스 시계열(참고 정보)을 새로 받아 DB에 저장합니다 (요청 제한으로 산업당 약 5.5초).
     반환: ({산업 id: Series}, {산업 id: 오류 메시지})
     """
     storage.init_db(db_file)

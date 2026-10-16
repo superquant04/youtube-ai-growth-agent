@@ -89,6 +89,7 @@ def compute_market_metrics(index, benchmark=None, as_of=None):
     - ret_1d/1m/3m/12m : 기간 수익률
     - rel_3m/12m/2y    : 벤치마크(SPY) 대비 상대 수익률
     - drawdown_3y      : 3년 고점 대비 낙폭 (<= 0)
+    - upside_to_high   : 3년 고점을 되찾으려면 남은 상승률 (>= 0, 앞으로 남은 반전의 크기)
     - rebound_52w      : 52주 저점 대비 반등폭
     - ma50_gap/ma200_gap : 이동평균 대비 괴리율
     - accel            : 최근 3개월 수익률 - 최근 1년 평균 분기 수익률 (양수면 상승 가속 = 추세 전환 신호)
@@ -113,7 +114,9 @@ def compute_market_metrics(index, benchmark=None, as_of=None):
         for key, n in (("rel_3m", W3M), ("rel_12m", W12M), ("rel_2y", W2Y)):
             metrics[key] = _relative_return(_period_return(s, n), _period_return(b, n))
 
-    metrics["drawdown_3y"] = last / s.iloc[-W3Y:].max() - 1
+    high_3y = s.iloc[-W3Y:].max()
+    metrics["drawdown_3y"] = last / high_3y - 1
+    metrics["upside_to_high"] = high_3y / last - 1
     metrics["rebound_52w"] = last / s.iloc[-W12M:].min() - 1
     metrics["ma50_gap"] = last / s.iloc[-50:].mean() - 1
     metrics["ma200_gap"] = last / s.iloc[-200:].mean() - 1

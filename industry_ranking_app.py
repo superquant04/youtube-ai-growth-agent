@@ -3,8 +3,9 @@ industry_ranking_app.py
 
 🚀 AI 상승 반전 산업 랭킹 - 실시간 대시보드
 
-AI 도입으로 가장 큰 "상승 반전"이 기대되는 산업을
-AI 레버리지(구조적 가정) + 반전 여력 + 반전 모멘텀(실시간 시장 데이터) + AI 뉴스 모멘텀(GDELT)으로 점수화해 순위를 매깁니다.
+AI 도입으로 가장 큰 "상승 반전"이 기대되는 산업을, 이미 일어난 상승은 빼고 앞으로 남은 몫만으로 점수화합니다.
+- 남은 반전 점수   : 3년 고점을 되찾기까지 남은 상승률 + 2년간 시장 대비 뒤처진 폭 (실시간 시장 데이터)
+- 주가 미반영 점수 : AI 잠재력 × (1 − 최근 1년 주가 반영도)
 
 사용법:
     pip install -r requirements.txt
@@ -23,6 +24,7 @@ from ai_industry_ranking.industries import (
     BENCHMARK_ID, BENCHMARK_TICKER, INDUSTRIES, INDUSTRY_BY_ID, LEVERAGE_FACTOR_LABELS,
     build_news_query, compute_ai_leverage,
 )
+from ai_industry_ranking.market_data import W3Y
 from ai_industry_ranking.scoring import COMPONENT_LABELS, COMPONENTS, DEFAULT_WEIGHTS, PHASES
 
 KST = ZoneInfo("Asia/Seoul")
@@ -99,8 +101,11 @@ def fmt_age(iso_ts):
 
 
 def kpi(col, label, value, sub):
-    col.metric(label, value)
-    col.caption(sub)
+    # 산업명이 길어 st.metric의 큰 글씨에서는 잘리므로 한 단계 작은 제목으로 표시
+    with col:
+        st.caption(label)
+        st.markdown(f"### {value}")
+        st.caption(sub)
 
 
 def fmt_rank_change(v):
@@ -110,8 +115,14 @@ def fmt_rank_change(v):
     return f"▲ {v}" if v > 0 else (f"▼ {-v}" if v < 0 else "–")
 
 
+def fmt_pct(v, signed=True):
+    if pd.isna(v):
+        return "-"
+    return f"{v:+.0%}" if signed else f"{v:.0%}"
+
+
 # ---------------------------------------------------------------------------
-# 사이드바: 가중치 · 뉴스 · 새로고침
+# 사이드바: 가중치 · 새로고침 · 참고 뉴스
 # ---------------------------------------------------------------------------
 
 st.sidebar.header("⚙️ 점수 가중치")
@@ -122,9 +133,19 @@ if sum(weights.values()) == 0:
     st.sidebar.error("가중치가 모두 0입니다. 하나 이상 올려 주세요.")
     st.stop()
 
-st.sidebar.header("📰 AI 뉴스 신호")
-use_news = st.sidebar.toggle("뉴스 모멘텀 반영", value=True)
-if st.sidebar.button("뉴스 신호 지금 갱신 (약 2~3분)", width="stretch", disabled=not use_news):
+st.sidebar.header("🔄 실시간 갱신")
+compare_label = st.sidebar.radio("순위 변동 비교 기준", ["1주 전", "1개월 전"], horizontal=True)
+compare_days = 5 if compare_label == "1주 전" else 21
+auto_refresh = st.sidebar.toggle("자동 새로고침", value=False)
+refresh_minutes = st.sidebar.select_slider("새로고침 주기 (분)", options=[1, 5, 15, 30], value=5, disabled=not auto_refresh)
+if st.sidebar.button("지금 새로고침", width="stretch"):
+    load_indices.clear()
+    load_news.clear()
+    load_history.clear()
+
+st.sidebar.header("📰 참고: AI 뉴스 추이")
+st.sidebar.caption("산업 상세 화면에만 표시되며 점수에는 반영되지 않습니다.")
+if st.sidebar.button("뉴스 추이 지금 갱신 (약 2~3분)", width="stretch"):
     bar = st.sidebar.progress(0.0, text="GDELT 뉴스 수집 준비 중...")
 
     def _progress(i, n, ind):
@@ -135,17 +156,7 @@ if st.sidebar.button("뉴스 신호 지금 갱신 (약 2~3분)", width="stretch"
     if errors:
         st.sidebar.warning(f"{len(errors)}개 산업 수집 실패: " + ", ".join(INDUSTRY_BY_ID[i].name for i in errors))
     else:
-        st.sidebar.success("뉴스 신호 갱신 완료")
-
-st.sidebar.header("🔄 실시간 갱신")
-compare_label = st.sidebar.radio("순위 변동 비교 기준", ["1주 전", "1개월 전"], horizontal=True)
-compare_days = 5 if compare_label == "1주 전" else 21
-auto_refresh = st.sidebar.toggle("자동 새로고침", value=False)
-refresh_minutes = st.sidebar.select_slider("새로고침 주기 (분)", options=[1, 5, 15, 30], value=5, disabled=not auto_refresh)
-if st.sidebar.button("지금 새로고침", width="stretch"):
-    load_indices.clear()
-    load_news.clear()
-    load_history.clear()
+        st.sidebar.success("뉴스 추이 갱신 완료")
 
 st.sidebar.caption(
     "시장 데이터: Yahoo Finance (약 15분 지연) · 뉴스: GDELT DOC 2.0\n\n"
@@ -158,19 +169,21 @@ st.sidebar.caption(
 # ---------------------------------------------------------------------------
 
 st.title("🚀 AI 상승 반전 산업 랭킹")
-st.caption("AI를 도입했을 때 가장 큰 상승 반전이 기대되는 산업을 실시간 시장·뉴스 데이터로 산출합니다.")
+st.caption(
+    "이미 오른 몫은 빼고, **앞으로 남은 반전**과 **아직 주가에 반영되지 않은 AI 잠재력**만으로 산업 순위를 매깁니다."
+)
 
 tab_rank, tab_history, tab_assumptions, tab_method = st.tabs(
-    ["🏆 실시간 랭킹", "📜 순위 히스토리", "🧩 AI 레버리지 가정", "📖 방법론"]
+    ["🏆 실시간 랭킹", "📜 순위 히스토리", "🧩 AI 잠재력 가정", "📖 방법론"]
 )
 
 
-# --- AI 레버리지 가정 편집 (랭킹 계산보다 먼저 값을 읽어야 하므로 먼저 렌더링) ---
+# --- AI 잠재력 가정 편집 (랭킹 계산보다 먼저 값을 읽어야 하므로 먼저 렌더링) ---
 
 with tab_assumptions:
     st.markdown(
-        "AI 레버리지는 실시간 데이터가 아닌 **구조적 가정치**입니다. 아래 1~5점 값을 바꾸면 랭킹에 즉시 반영됩니다. "
-        "도입 장벽은 높을수록 감점됩니다."
+        "AI 잠재력은 실시간 데이터가 아닌 **구조적 가정치**로, `주가 미반영 점수 = AI 잠재력 × (1 − 주가 반영도)` 계산에 쓰입니다. "
+        "아래 1~5점 값을 바꾸면 랭킹에 즉시 반영됩니다. 도입 장벽은 높을수록 감점됩니다."
     )
     factor_cols = list(LEVERAGE_FACTOR_LABELS)
     base_df = pd.DataFrame([
@@ -200,27 +213,30 @@ with tab_assumptions:
     })
     changed = int((ai_leverage != ranking.default_ai_leverage().reindex(ai_leverage.index)).sum())
     if changed:
-        st.info(f"✏️ {changed}개 산업의 AI 레버리지를 기본값에서 수정해 랭킹에 반영 중입니다.")
+        st.info(f"✏️ {changed}개 산업의 AI 잠재력을 기본값에서 수정해 랭킹에 반영 중입니다.")
 
 
 # --- 방법론 ---
 
 with tab_method:
     st.markdown(f"""
-### 상승 반전 점수 = 4개 구성요소의 가중 평균 (0~100점)
+### 상승 반전 점수 = 남은 반전 점수와 주가 미반영 점수의 가중 평균 (0~100점, 기본 50:50)
 
-| 구성요소 | 의미 | 계산 | 데이터 |
-|---|---|---|---|
-| **AI 레버리지** | AI가 키울 수 있는 이익 체력 | 업무 노출도·데이터 자산·가치 레버리지·도입 장벽(역) 1~5점 가중합 | 가정치 (편집 가능) |
-| **반전 여력** | 그동안 얼마나 눌려 있었나 | 2년 {BENCHMARK_TICKER} 대비 상대수익률이 낮을수록, 3년 고점 대비 낙폭이 클수록 높은 백분위 | 실시간 가격 |
-| **반전 모멘텀** | 바닥에서 고개를 드는가 | 3개월 상대수익률, 1개월 수익률, 상승 가속도(3개월 수익률 − 1년 평균 분기 수익률)의 백분위 평균 | 실시간 가격 |
-| **AI 뉴스 모멘텀** | AI 내러티브가 퍼지는 속도 | "AI + 산업" 기사 비중의 직전 8주 대비 증가율과 최근 7일 비중의 백분위 평균 | GDELT 뉴스 |
+이미 일어난 상승(최근 모멘텀, 뉴스 열기)은 점수에 넣지 않고 **앞으로 남은 몫**만 평가합니다.
 
-- 시장·뉴스 지표는 **산업 간 상대 백분위**(최하위 0점, 최상위 100점)로 환산해 단위가 다른 지표를 합칩니다.
-- 뉴스 신호가 전혀 없으면 뉴스 가중치를 제외하고 나머지 가중치로 재정규화합니다. 일부 산업만 비어 있으면 그 산업은 중립 50점을 줍니다.
-- 산업 시세는 대표 ETF(또는 대표 종목 동일가중 바스켓)로 대신합니다. 티커는 `ai_industry_ranking/industries.py`에서 바꿀 수 있습니다.
+| 구성요소 | 의미 | 계산 |
+|---|---|---|
+| **남은 반전 점수** | 가격이 앞으로 되찾을 거리 | ① 3년 고점을 회복하려면 남은 상승률, ② 2년간 {BENCHMARK_TICKER} 대비 뒤처진 폭 — 두 지표의 산업 간 백분위 평균 |
+| **주가 미반영 점수** | AI 잠재력 중 아직 주가에 반영되지 않은 몫 | AI 잠재력(0~100) × (1 − 주가 반영도) |
 
-### 반전 국면 판정 (절대 기준)
+- **AI 잠재력**: 업무 노출도·데이터 자산·가치 레버리지·도입 장벽(역) 1~5점의 가중합. '🧩 AI 잠재력 가정' 탭에서 수정할 수 있습니다.
+- **주가 반영도(0~100%)**: 최근 1년 {BENCHMARK_TICKER} 대비 상대수익률과 52주 저점 대비 반등폭의 산업 간 백분위 평균.
+  최근 1년 동안 이미 많이 오른 산업일수록 AI 기대가 주가에 반영됐다고 봅니다.
+- 예) AI 잠재력 80점, 반영도 25% → 주가 미반영 점수 60점. 같은 잠재력이라도 반영도 90%면 8점.
+- 시장 지표는 **산업 간 상대 백분위**(최하위 0점, 최상위 100점)로 환산합니다. 산업 시세는 대표 ETF(또는 대표 종목 동일가중 바스켓)로 대신하며,
+  티커는 `ai_industry_ranking/industries.py`에서 바꿀 수 있습니다.
+
+### 반전 국면 (참고 표시, 점수에는 미반영)
 
 | 국면 | 조건 |
 |---|---|
@@ -231,9 +247,9 @@ with tab_method:
 | {PHASES['neutral']} | 그 외 |
 
 ### 한계
-- AI 레버리지는 문헌(예: Eloundou et al. 2023 *GPTs are GPTs*)의 경향을 참고한 **주관적 가정**입니다.
-- ETF 가격은 금리·경기 등 AI 외 요인의 영향을 함께 받습니다. 반전 여력·모멘텀이 "AI 때문"임을 보장하지 않습니다.
-- GDELT 뉴스량은 관심도의 대리지표일 뿐, 실제 도입 성과를 측정하지는 않습니다.
+- AI 잠재력은 문헌(예: Eloundou et al. 2023 *GPTs are GPTs*)의 경향을 참고한 **주관적 가정**입니다.
+- 주가 반영도는 가격 움직임으로만 추정합니다. 밸류에이션(PER 등)이나 실적 전망은 들어가지 않습니다.
+- ETF 가격은 금리·경기 등 AI 외 요인의 영향을 함께 받습니다. 남은 반전이 크다는 것이 "AI 덕분에 반드시 회복한다"는 뜻은 아닙니다.
 """)
 
 
@@ -241,7 +257,7 @@ with tab_method:
 # 실시간 랭킹 (자동 새로고침 시 이 부분만 주기적으로 다시 실행)
 # ---------------------------------------------------------------------------
 
-def render_ranking(weights, use_news, ai_leverage, compare_days):
+def render_ranking(weights, ai_leverage, compare_days):
     try:
         indices, fetched_at = load_indices()
     except market_data.MarketDataError as e:
@@ -249,31 +265,22 @@ def render_ranking(weights, use_news, ai_leverage, compare_days):
         st.caption("Yahoo Finance(query1/query2.finance.yahoo.com) 접속이 막혀 있지 않은지 확인한 뒤 '지금 새로고침'을 눌러 주세요.")
         return
 
-    news_series, news_fetched_at = load_news() if use_news else ({}, None)
-    table = ranking.build_ranking(
-        indices, weights, news_series=news_series or None,
-        ai_leverage=ai_leverage, compare_days=compare_days,
-    )
-    news_active = "news_momentum" in table.attrs["active_components"]
+    table = ranking.build_ranking(indices, weights, ai_leverage=ai_leverage, compare_days=compare_days)
     ranked = table[table["total_score"].notna()]
     if ranked.empty:
         st.error("점수를 계산할 수 있는 산업이 없습니다 (가격 이력 부족).")
         return
 
     # --- KPI ---
-    k1, k2, k3, k4 = st.columns([1.4, 1, 1, 1])
+    k1, k2, k3, k4 = st.columns(4)
     top = ranked.iloc[0]
     kpi(k1, "🥇 현재 1위", top["name"], f"상승 반전 점수 {top['total_score']:.1f}점")
-    reversing = ranked["phase"].isin(["reversing", "early"]).sum()
-    kpi(k2, "🔥 반전 진행·초기 산업", f"{reversing}개", f"전체 {len(ranked)}개 산업 중")
-    kpi(k3, "📈 시장 데이터 기준일", f"{table.attrs['as_of']:%Y-%m-%d}", f"조회 {fetched_at:%H:%M:%S} KST")
-    if not use_news:
-        kpi(k4, "📰 뉴스 신호", "제외", "사이드바에서 켤 수 있음")
-    elif news_active:
-        kpi(k4, "📰 뉴스 신호", f"{len(news_series)}개 산업", f"GDELT 수집 {fmt_age(news_fetched_at)}")
-    else:
-        kpi(k4, "📰 뉴스 신호", "없음", "사이드바에서 갱신 필요")
-        st.info("📰 저장된 GDELT 뉴스 신호가 없어 뉴스 가중치를 제외하고 계산했습니다. 사이드바의 '뉴스 신호 지금 갱신'을 눌러 주세요.")
+    top_rem = ranked.loc[ranked["remaining_reversal"].idxmax()]
+    kpi(k2, "🎯 남은 반전 1위", top_rem["name"], f"3년 고점까지 {fmt_pct(top_rem['upside_to_high'])}")
+    top_unp = ranked.loc[ranked["unpriced"].idxmax()]
+    kpi(k3, "💎 주가 미반영 1위", top_unp["name"],
+        f"AI 잠재력 {top_unp['ai_leverage']:.0f}점 · 반영도 {fmt_pct(top_unp['priced_in'], signed=False)}")
+    kpi(k4, "📈 시장 데이터 기준일", f"{table.attrs['as_of']:%Y-%m-%d}", f"조회 {fetched_at:%H:%M:%S} KST")
 
     # --- TOP 3 ---
     cols = st.columns(3)
@@ -281,7 +288,14 @@ def render_ranking(weights, use_news, ai_leverage, compare_days):
         with col.container(border=True):
             medal = {1: "🥇", 2: "🥈", 3: "🥉"}[int(row["rank"])]
             st.markdown(f"#### {medal} {row['name']}")
-            st.markdown(f"**{row['total_score']:.1f}점** · {row['phase_label']} · 변동 {fmt_rank_change(row['rank_change'])}")
+            st.markdown(
+                f"**{row['total_score']:.1f}점** · 변동 {fmt_rank_change(row['rank_change'])}  \n"
+                f"남은 반전 {row['remaining_reversal']:.0f} · 주가 미반영 {row['unpriced']:.0f}"
+            )
+            st.caption(
+                f"3년 고점까지 {fmt_pct(row['upside_to_high'])} · "
+                f"AI 잠재력 {row['ai_leverage']:.0f}점 중 반영도 {fmt_pct(row['priced_in'], signed=False)}"
+            )
             st.caption(INDUSTRY_BY_ID[iid].thesis)
 
     # --- 랭킹 표 ---
@@ -289,27 +303,26 @@ def render_ranking(weights, use_news, ai_leverage, compare_days):
     show = table.copy()
     show.attrs = {}  # Timestamp가 든 attrs는 Arrow 직렬화 경고를 내므로 표시용 사본에서는 비움
     show["변동"] = show["rank_change"].map(fmt_rank_change)
-    for key in ("ret_1d", "ret_1m", "ret_3m", "drawdown_3y", "news_change"):
+    for key in ("priced_in", "upside_to_high", "rel_2y", "rel_12m", "ret_1d"):
         show[key] = show[key] * 100
     st.dataframe(
-        show[["rank", "변동", "name", "phase_label", "total_score", *COMPONENTS,
-              "ret_1d", "ret_1m", "ret_3m", "drawdown_3y", "news_change", "tickers"]],
+        show[["rank", "변동", "name", "total_score", *COMPONENTS, "ai_leverage", "priced_in",
+              "upside_to_high", "rel_2y", "rel_12m", "ret_1d", "phase_label", "tickers"]],
         hide_index=True, width="stretch", height=35 * (len(show) + 1) + 3,
         column_config={
             "rank": st.column_config.NumberColumn("순위", width="small"),
             "변동": st.column_config.TextColumn(f"{'1주' if compare_days == 5 else '1개월'} 변동", width="small"),
             "name": st.column_config.TextColumn("산업"),
-            "phase_label": st.column_config.TextColumn("국면"),
             "total_score": st.column_config.ProgressColumn("상승 반전 점수", min_value=0, max_value=100, format="%.1f"),
-            "ai_leverage": st.column_config.NumberColumn("AI 레버리지", format="%.0f"),
-            "reversal_room": st.column_config.NumberColumn("반전 여력", format="%.0f"),
-            "turn_momentum": st.column_config.NumberColumn("반전 모멘텀", format="%.0f"),
-            "news_momentum": st.column_config.NumberColumn("AI 뉴스", format="%.0f"),
+            "remaining_reversal": st.column_config.NumberColumn("남은 반전", format="%.0f"),
+            "unpriced": st.column_config.NumberColumn("주가 미반영", format="%.0f"),
+            "ai_leverage": st.column_config.NumberColumn("AI 잠재력", format="%.0f"),
+            "priced_in": st.column_config.NumberColumn("주가 반영도", format="%.0f%%"),
+            "upside_to_high": st.column_config.NumberColumn("3년 고점까지", format="%+.0f%%"),
+            "rel_2y": st.column_config.NumberColumn(f"2년 vs {BENCHMARK_TICKER}", format="%+.0f%%"),
+            "rel_12m": st.column_config.NumberColumn(f"1년 vs {BENCHMARK_TICKER}", format="%+.0f%%"),
             "ret_1d": st.column_config.NumberColumn("1일", format="%+.1f%%"),
-            "ret_1m": st.column_config.NumberColumn("1개월", format="%+.1f%%"),
-            "ret_3m": st.column_config.NumberColumn("3개월", format="%+.1f%%"),
-            "drawdown_3y": st.column_config.NumberColumn("3년 고점 대비", format="%+.1f%%"),
-            "news_change": st.column_config.NumberColumn("AI 뉴스 증감(8주 대비)", format="%+.0f%%"),
+            "phase_label": st.column_config.TextColumn("국면(참고)"),
             "tickers": st.column_config.TextColumn("대표 티커"),
         },
     )
@@ -320,7 +333,7 @@ def render_ranking(weights, use_news, ai_leverage, compare_days):
         st.markdown("**점수 구성** · 구성요소별 기여 점수 (합계 = 상승 반전 점수)")
         st.plotly_chart(contribution_chart(ranked), width="stretch")
     with c_right:
-        st.markdown("**반전 매트릭스** · 오른쪽 위일수록 눌렸다가 돌아서는 산업 · 원 크기 = AI 레버리지")
+        st.markdown("**반전 매트릭스** · 오른쪽 위일수록 남은 반전과 미반영 AI 잠재력이 모두 큼 · 원 크기 = AI 잠재력")
         st.plotly_chart(reversal_matrix(ranked), width="stretch")
 
     # --- 산업 상세 ---
@@ -330,7 +343,8 @@ def render_ranking(weights, use_news, ai_leverage, compare_days):
         "산업 선택", options, format_func=lambda i: f"{int(table.loc[i, 'rank'])}위 · {INDUSTRY_BY_ID[i].name}",
         key="detail_industry",
     )
-    render_detail(selected, table, indices, news_series if news_active else {})
+    news_series, news_fetched_at = load_news()
+    render_detail(selected, table, indices, news_series, news_fetched_at)
 
 
 def contribution_chart(ranked):
@@ -362,25 +376,28 @@ def reversal_matrix(ranked):
     for flag, color, name in ((False, c["muted"], "기타 산업"), (True, c["series"][0], f"상위 {top_n}개 산업")):
         d = ranked[is_top == flag]
         fig.add_scatter(
-            x=d["reversal_room"], y=d["turn_momentum"], mode="markers+text" if flag else "markers", name=name,
-            text=d["name"] if flag else None, textposition="top center", textfont=dict(size=11),
+            x=d["remaining_reversal"], y=d["unpriced"], mode="markers+text" if flag else "markers", name=name,
+            text=d["name"] if flag else None, textfont=dict(size=11),
+            # 오른쪽 끝 점의 이름표가 잘리지 않도록 왼쪽으로 붙임
+            textposition=["top left" if x > 75 else "top center" for x in d["remaining_reversal"]],
             marker=dict(size=8 + d["ai_leverage"] / 5, color=color, opacity=0.9, line=dict(color=c["surface"], width=2)),
-            customdata=d[["name", "rank", "total_score", "ai_leverage"]].astype(object).to_numpy(),
-            hovertemplate="<b>%{customdata[1]}위 %{customdata[0]}</b><br>반전 여력 %{x:.0f} · 반전 모멘텀 %{y:.0f}"
-                          "<br>AI 레버리지 %{customdata[3]:.0f} · 총점 %{customdata[2]:.1f}<extra></extra>",
+            customdata=d[["name", "rank", "total_score", "ai_leverage", "priced_in"]].astype(object).to_numpy(),
+            hovertemplate="<b>%{customdata[1]}위 %{customdata[0]}</b><br>남은 반전 %{x:.0f} · 주가 미반영 %{y:.0f}"
+                          "<br>AI 잠재력 %{customdata[3]:.0f} · 반영도 %{customdata[4]:.0%}"
+                          " · 총점 %{customdata[2]:.1f}<extra></extra>",
         )
-    for x, y, label, anchor in ((98, 98, "반전 진행 구간", "right"), (98, 2, "바닥 탐색", "right"),
-                                (2, 98, "상승 선반영", "left"), (2, 2, "소외", "left")):
+    for x, y, label, anchor in ((98, 98, "최우선 후보", "right"), (98, 2, "가격만 눌림", "right"),
+                                (2, 98, "가격 회복 · AI 미반영", "left"), (2, 2, "반영 완료", "left")):
         fig.add_annotation(x=x, y=y, text=label, showarrow=False, xanchor=anchor,
                            font=dict(color=c["muted"], size=11))
     fig.add_hline(y=50, line=dict(color=c["grid"], width=1))
     fig.add_vline(x=50, line=dict(color=c["grid"], width=1))
-    fig.update_xaxes(range=[-5, 105], title="반전 여력 →")
-    fig.update_yaxes(range=[-5, 108], title="반전 모멘텀 →")
+    fig.update_xaxes(range=[-5, 105], title="남은 반전 점수 →")
+    fig.update_yaxes(range=[-5, 108], title="주가 미반영 점수 →")
     return base_layout(fig, height=max(420, 26 * len(ranked) + 80))
 
 
-def render_detail(iid, table, indices, news_series):
+def render_detail(iid, table, indices, news_series, news_fetched_at):
     ind = INDUSTRY_BY_ID[iid]
     row = table.loc[iid]
     c = colors()
@@ -388,32 +405,31 @@ def render_detail(iid, table, indices, news_series):
     left, right = st.columns([2, 3])
     with left:
         st.markdown(f"### {int(row['rank'])}위 · {ind.name}")
-        st.markdown(f"**{row['total_score']:.1f}점** · {row['phase_label']} · 대표 티커 `{ind.ticker_label}`")
+        st.markdown(f"**{row['total_score']:.1f}점** · 국면(참고) {row['phase_label']} · 대표 티커 `{ind.ticker_label}`")
+        st.markdown(
+            f"- **남은 반전 {row['remaining_reversal']:.0f}점** — 3년 고점까지 {fmt_pct(row['upside_to_high'])}, "
+            f"2년간 {BENCHMARK_TICKER} 대비 {fmt_pct(row['rel_2y'])}\n"
+            f"- **주가 미반영 {row['unpriced']:.0f}점** — AI 잠재력 {row['ai_leverage']:.0f} × "
+            f"(1 − 반영도 {fmt_pct(row['priced_in'], signed=False)}) · 1년 {BENCHMARK_TICKER} 대비 {fmt_pct(row['rel_12m'])}"
+        )
         st.markdown(f"**AI 촉매** — {ind.thesis}")
         st.markdown(f"**반전 리스크** — {ind.risk}")
-        st.dataframe(
-            pd.DataFrame({
-                "구성요소": [COMPONENT_LABELS[x] for x in COMPONENTS],
-                "점수": [row[x] for x in COMPONENTS],
-                "총점 기여": [row[f"contrib_{x}"] for x in COMPONENTS],
-            }),
-            hide_index=True, width="stretch",
-            column_config={
-                "점수": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f"),
-                "총점 기여": st.column_config.NumberColumn(format="%.1f"),
-            },
-        )
     with right:
-        s = indices[iid].dropna().iloc[-252:]
+        s = indices[iid].dropna().iloc[-W3Y:]
         b = indices[BENCHMARK_ID].reindex(s.index).ffill()
         s, b = s / s.iloc[0] * 100, b / b.iloc[0] * 100
         fig = go.Figure()
         fig.add_scatter(x=b.index, y=b, name=f"{BENCHMARK_TICKER} (S&P 500)", line=dict(color=c["muted"], width=2))
         fig.add_scatter(x=s.index, y=s, name=ind.name, line=dict(color=c["series"][0], width=2))
+        fig.add_hline(
+            y=s.max(), line=dict(color=c["series"][0], width=1, dash="dot"),
+            annotation_text=f"3년 고점 (남은 반전 {fmt_pct(row['upside_to_high'])})", annotation_position="top left",
+            annotation_font=dict(color=c["ink2"], size=11),
+        )
         fig.update_layout(hovermode="x unified")
         fig.update_yaxes(title=None)
-        st.markdown(f"**최근 1년 주가 흐름** · {ind.name} vs {BENCHMARK_TICKER}, 시작=100")
-        st.plotly_chart(base_layout(fig, height=340), width="stretch")
+        st.markdown(f"**최근 3년 주가 흐름** · {ind.name} vs {BENCHMARK_TICKER}, 시작=100")
+        st.plotly_chart(base_layout(fig, height=360), width="stretch")
 
     ns = news_series.get(iid)
     if ns is not None and len(ns):
@@ -422,10 +438,13 @@ def render_detail(iid, table, indices, news_series):
                         fill="tozeroy", name="AI 뉴스 비중",
                         hovertemplate="%{x|%Y-%m-%d}<br>전체 기사 중 %{y:.3f}%<extra></extra>")
         fig.update_yaxes(title=None, rangemode="tozero")
-        st.markdown(f"**'AI + {ind.name}' 뉴스 비중 추이** · GDELT 전 세계 모니터링 기사 중 비율(%)")
-        st.plotly_chart(base_layout(fig, height=260, legend=False), width="stretch")
+        st.markdown(
+            f"**(참고) 'AI + {ind.name}' 뉴스 비중 추이** · GDELT 전 세계 기사 중 비율(%) · "
+            f"수집 {fmt_age(news_fetched_at)} · 점수에는 미반영"
+        )
+        st.plotly_chart(base_layout(fig, height=240, legend=False), width="stretch")
 
-    with st.expander("📰 최신 AI 뉴스 헤드라인 (GDELT, 최근 7일)"):
+    with st.expander("📰 (참고) 최신 AI 뉴스 헤드라인 (GDELT, 최근 7일)"):
         if st.button("헤드라인 불러오기", key=f"news_{iid}"):
             try:
                 articles = load_articles(build_news_query(ind))
@@ -442,7 +461,7 @@ def render_detail(iid, table, indices, news_series):
 
 with tab_rank:
     run_every = f"{refresh_minutes}m" if auto_refresh else None
-    st.fragment(render_ranking, run_every=run_every)(weights, use_news, ai_leverage, compare_days)
+    st.fragment(render_ranking, run_every=run_every)(weights, ai_leverage, compare_days)
 
 
 # ---------------------------------------------------------------------------
@@ -476,10 +495,12 @@ with tab_history:
 
         st.caption(f"최근 스냅샷: {latest['created_at'].iloc[0]:%Y-%m-%d %H:%M} KST · 시장 기준일 {latest['market_date'].iloc[0]}")
         st.dataframe(
-            latest[["rank", "industry_name", "total_score", "phase"]].assign(phase=lambda d: d["phase"].map(PHASES)),
+            latest[["rank", "industry_name", "total_score", "remaining_reversal", "unpriced"]],
             hide_index=True, width="stretch",
             column_config={
-                "rank": "순위", "industry_name": "산업", "phase": "국면",
+                "rank": "순위", "industry_name": "산업",
                 "total_score": st.column_config.ProgressColumn("상승 반전 점수", min_value=0, max_value=100, format="%.1f"),
+                "remaining_reversal": st.column_config.NumberColumn("남은 반전", format="%.0f"),
+                "unpriced": st.column_config.NumberColumn("주가 미반영", format="%.0f"),
             },
         )
