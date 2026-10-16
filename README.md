@@ -21,11 +21,15 @@ AI가 데이터 기반 성장 인사이트를 도출하는 에이전트입니다
 ├── migrate_history_to_db.py    # 구버전 hypothesis_history.json → SQLite 이전 스크립트
 ├── generate_token.py           # (최초 1회) GitHub Actions용 refresh token 발급
 ├── .github/workflows/
-│   └── scheduled_run.yml       # 정기 자동 실행 워크플로우
+│   ├── scheduled_run.yml       # 정기 자동 실행 워크플로우
+│   └── industry_ranking.yml    # AI 산업 랭킹 스냅샷 평일 정기 수집
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
-└── reports/                    # main.py 실행 시 리포트(json/md) 자동 저장
+├── reports/                    # main.py 실행 시 리포트(json/md) 자동 저장
+│
+├── industry_ranking_app.py     # 🚀 AI 상승 반전 산업 랭킹 대시보드 (아래 별도 섹션 참고)
+└── ai_industry_ranking/        # 랭킹 엔진 패키지 (수집 → 점수화 → 저장, tests/ 포함)
 ```
 
 ---
@@ -217,3 +221,69 @@ Secrets에 별도로 등록할 값은 없습니다 (DB 파일만 읽음).
 [Streamlit Cloud] push 감지 → 자동 재배포 → 대시보드에 최신 데이터 반영
 ```
 
+
+---
+
+## 🚀 AI 상승 반전 산업 랭킹 (실시간 대시보드)
+
+**"AI를 도입했을 때 가장 큰 상승 반전을 일으킬 산업"** 의 순위를 실시간 데이터로 계산해 보여 주는 별도 앱입니다.
+구성요소는 **앞으로 남은 반전 점수**와 **주가 미반영 점수** 두 가지뿐입니다.
+이미 오른 몫(최근 모멘텀·뉴스 열기 등)은 넣지 않습니다.
+
+### 실행
+
+```bash
+pip install -r requirements.txt
+streamlit run industry_ranking_app.py
+```
+
+API 키가 필요 없습니다. 시세는 Yahoo Finance(약 15분 지연)에서 받습니다.
+
+### 점수 계산
+
+**상승 반전 점수 (0~100) = 남은 반전 점수와 주가 미반영 점수의 가중 평균** (기본 50 : 50, 사이드바에서 조정)
+
+| 구성요소 | 의미 | 계산 |
+|---|---|---|
+| 남은 반전 점수 | 가격이 앞으로 되찾을 거리 | 3년 고점을 회복하려면 남은 상승률, 2년간 SPY 대비 뒤처진 폭의 산업 간 백분위 평균 |
+| 주가 미반영 점수 | AI 잠재력 중 아직 주가에 반영되지 않은 몫 | AI 잠재력(0~100) × (1 − 주가 반영도) |
+
+- **AI 잠재력**: 업무 노출도·데이터 자산·가치 레버리지·도입 장벽(역) 1~5점 가정치의 가중합. 대시보드에서 수정할 수 있습니다.
+- **주가 반영도(0~100%)**: 최근 1년 SPY 대비 상대수익률과 52주 저점 대비 반등폭의 산업 간 백분위 평균.
+  최근 1년간 이미 많이 오른 산업일수록 AI 기대가 주가에 반영됐다고 봅니다.
+  예) AI 잠재력 80점, 반영도 25% → 주가 미반영 점수 60점.
+
+산업 시세는 대표 ETF(예: 바이오 `XBI`, 소프트웨어 `IGV`)나 대표 종목 동일가중 바스켓(예: 법률·전문정보 `TRI·RELX·WTKWY`)으로 대신합니다.
+산업 목록, 티커, AI 잠재력 기본값은 모두 `ai_industry_ranking/industries.py` 한 곳에서 수정합니다.
+
+### 화면 구성
+
+| 탭 | 내용 |
+|---|---|
+| 🏆 실시간 랭킹 | 1위·남은 반전 1위·주가 미반영 1위, 1~3위 카드, 전체 25개 산업 순위표(1주/1개월 전 대비 순위 변동), 점수 구성 막대, 반전 매트릭스(남은 반전 × 주가 미반영), 산업 상세(두 점수의 계산 근거, 3년 주가와 고점까지 거리, AI 촉매·리스크) |
+| 📜 순위 히스토리 | 정기 수집 스냅샷으로 본 상위 산업의 순위 추이 |
+| 🧩 AI 잠재력 가정 | 산업별 1~5점 가정치를 표에서 직접 수정 → 랭킹에 즉시 반영 |
+| 📖 방법론 | 점수 공식, 한계 |
+
+### 정기 수집
+
+```bash
+python -m ai_industry_ranking.collect             # 랭킹 계산 → 스냅샷 저장
+python -m ai_industry_ranking.collect --no-save   # 저장 없이 출력만
+```
+
+`.github/workflows/industry_ranking.yml`이 평일 UTC 21:30(KST 다음날 06:30, 미국 장 마감 후)에 실행하고
+`ai_industry_ranking/industry_ranking.db`를 커밋합니다. 별도 Secrets 등록은 필요 없습니다.
+Streamlit Cloud에 배포했다면 이 커밋으로 순위 히스토리가 자동 반영됩니다 (Main file path: `industry_ranking_app.py`).
+
+### 테스트
+
+```bash
+pip install pytest
+python -m pytest ai_industry_ranking/tests -q
+```
+
+네트워크 없이 합성 데이터로 지표 계산, 점수화, 저장소, Streamlit 화면 렌더링까지 검증합니다.
+
+> ⚠️ AI 잠재력은 주관적 가정치이고, 주가 반영도는 가격 움직임만으로 추정합니다(밸류에이션 미포함).
+> ETF 가격에는 금리·경기 등 AI 외 요인도 섞여 있습니다. 이 랭킹은 참고 지표이며 투자 권유가 아닙니다.
