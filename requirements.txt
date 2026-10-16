@@ -14,5 +14,9 @@ tabulate>=0.9.0          # DataFrame.to_markdown()에 필요
 python-dotenv>=1.0.1
 
 # ── 대시보드 ──
-streamlit>=1.35.0
+streamlit>=1.50.0
 plotly>=5.22.0
+
+# ── AI 상승 반전 산업 랭킹 (industry_ranking_app.py) ──
+yfinance>=0.2.54         # 실시간(약 15분 지연) ETF 시세
+requests>=2.31.0         # GDELT 뉴스 API
