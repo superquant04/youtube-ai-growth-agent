@@ -21,8 +21,7 @@ AI가 데이터 기반 성장 인사이트를 도출하는 에이전트입니다
 ├── migrate_history_to_db.py    # 구버전 hypothesis_history.json → SQLite 이전 스크립트
 ├── generate_token.py           # (최초 1회) GitHub Actions용 refresh token 발급
 ├── .github/workflows/
-│   ├── scheduled_run.yml       # 정기 자동 실행 워크플로우
-│   └── industry_ranking.yml    # AI 산업 랭킹 스냅샷 평일 정기 수집
+│   └── scheduled_run.yml       # 정기 자동 실행 워크플로우
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
@@ -265,16 +264,22 @@ API 키가 필요 없습니다. 시세는 Yahoo Finance(약 15분 지연)에서 
 | 🧩 AI 잠재력 가정 | 산업별 1~5점 가정치를 표에서 직접 수정 → 랭킹에 즉시 반영 |
 | 📖 방법론 | 점수 공식, 한계 |
 
-### 정기 수집
+### Claude에서 정기 실행 (GitHub Actions 미사용)
+
+이 랭킹은 GitHub Actions가 아니라 **Claude 정기 작업**으로 돌립니다. 평일 미국 장 마감 후 Claude가 아래 명령을 실행하고,
+결과 JSON을 claude.ai 대시보드(Artifact)에 올립니다. 저장소에는 아무것도 커밋하지 않습니다.
 
 ```bash
-python -m ai_industry_ranking.collect             # 랭킹 계산 → 스냅샷 저장
-python -m ai_industry_ranking.collect --no-save   # 저장 없이 출력만
+python -m ai_industry_ranking.collect --no-save \
+    --json out/ranking.json --history out/history.json   # 최신 랭킹 + 순위 추이 JSON
+python -m ai_industry_ranking.collect                      # (로컬) 랭킹 계산 → SQLite 스냅샷 저장
 ```
 
-`.github/workflows/industry_ranking.yml`이 평일 UTC 21:30(KST 다음날 06:30, 미국 장 마감 후)에 실행하고
-`ai_industry_ranking/industry_ranking.db`를 커밋합니다. 별도 Secrets 등록은 필요 없습니다.
-Streamlit Cloud에 배포했다면 이 커밋으로 순위 히스토리가 자동 반영됩니다 (Main file path: `industry_ranking_app.py`).
+- `ranking.json`: 산업별 최신 순위와 두 점수, 그 입력값
+- `history.json`: 실행마다 시장 기준일 단위로 순위·점수를 누적 (약 1년치 보관). 정기 작업은 대시보드에 올라 있는
+  직전 파일을 받아 이어 붙입니다.
+- Claude 실행 환경이 Yahoo Finance(`query1.finance.yahoo.com`, `query2.finance.yahoo.com`, `fc.yahoo.com`,
+  `guce.yahoo.com`)에 접속할 수 있어야 합니다. 환경 설정의 Network access에서 허용하세요.
 
 ### 테스트
 

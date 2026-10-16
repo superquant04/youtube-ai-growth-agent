@@ -1,13 +1,15 @@
 """
 collect.py
 
-AI 상승 반전 산업 랭킹 - 수집/계산 CLI (GitHub Actions 정기 실행용)
+AI 상승 반전 산업 랭킹 - 수집/계산 CLI (Claude 정기 작업에서 실행)
 
 파이프라인: 실시간 가격(Yahoo Finance) 수집 -> 점수 계산(남은 반전 + 주가 미반영) -> 스냅샷 DB 저장 -> 콘솔 출력
+            (선택) claude.ai 대시보드에 올릴 JSON 내보내기
 
 사용법:
     python -m ai_industry_ranking.collect             # 랭킹 계산 + 스냅샷 저장
     python -m ai_industry_ranking.collect --no-save   # DB에 스냅샷 저장 없이 출력만
+    python -m ai_industry_ranking.collect --json out/ranking.json --history out/history.json
 """
 
 import argparse
@@ -15,7 +17,7 @@ import sys
 
 import pandas as pd
 
-from ai_industry_ranking import market_data, ranking, storage
+from ai_industry_ranking import export, market_data, ranking, storage
 from ai_industry_ranking.industries import INDUSTRY_BY_ID
 from ai_industry_ranking.scoring import DEFAULT_WEIGHTS
 
@@ -24,6 +26,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="AI 상승 반전 산업 랭킹 수집기")
     parser.add_argument("--no-save", action="store_true", help="랭킹 스냅샷을 DB에 저장하지 않음")
     parser.add_argument("--top", type=int, default=25, help="출력할 순위 개수 (기본값: 25)")
+    parser.add_argument("--json", metavar="PATH", help="최신 랭킹을 JSON으로 저장 (대시보드 업로드용)")
+    parser.add_argument("--history", metavar="PATH", help="순위 추이 JSON에 이번 결과를 누적 (없으면 새로 생성)")
     return parser.parse_args()
 
 
@@ -49,6 +53,14 @@ def main():
         names = {iid: ind.name for iid, ind in INDUSTRY_BY_ID.items()}
         created_at = storage.save_ranking_snapshot(table, names)
         print(f"\n💾 스냅샷 저장 완료: {storage.DB_FILE} ({created_at})")
+
+    generated_at = storage.utc_now_iso()
+    if args.json:
+        export.write_ranking_json(table, args.json, generated_at)
+        print(f"📤 랭킹 JSON 저장: {args.json}")
+    if args.history:
+        n_dates = export.merge_history(table, args.history, generated_at)
+        print(f"📤 순위 추이 JSON 갱신: {args.history} (시장 기준일 {n_dates}일치)")
 
 
 def format_table(table):

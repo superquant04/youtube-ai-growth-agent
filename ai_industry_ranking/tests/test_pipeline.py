@@ -200,3 +200,43 @@ def test_storage_roundtrip(tmp_path, indices):
     top = hist.sort_values("rank").iloc[0]
     assert top["industry_id"] == table.index[0]
     assert top["unpriced"] == pytest.approx(table.iloc[0]["unpriced"])
+
+
+# ---------------------------------------------------------------------------
+# export (claude.ai 대시보드 업로드용 JSON)
+# ---------------------------------------------------------------------------
+
+def test_ranking_json_is_plain_json(tmp_path, indices):
+    import json
+
+    from ai_industry_ranking import export
+
+    table = ranking.build_ranking(indices, scoring.DEFAULT_WEIGHTS)
+    path = tmp_path / "ranking.json"
+    export.write_ranking_json(table, str(path), "2026-10-16T21:00:00+00:00")
+    rows = json.loads(path.read_text(encoding="utf-8"))["rows"]
+
+    assert len(rows) == len(INDUSTRIES)
+    assert [r["rank"] for r in rows] == list(range(1, len(INDUSTRIES) + 1))
+    top = rows[0]
+    assert top["industry_id"] == table.index[0] and top["market_date"] == "2026-10-16"
+    assert top["total_score"] == pytest.approx(table.iloc[0]["total_score"], abs=0.05)
+    assert all(type(r["rank"]) is int for r in rows)
+
+
+def test_history_merge_replaces_same_market_date(tmp_path, indices):
+    import json
+
+    from ai_industry_ranking import export
+
+    path = str(tmp_path / "history.json")
+    for as_of in (indices.index[-6], indices.index[-1], indices.index[-1]):
+        table = ranking.build_ranking(indices, scoring.DEFAULT_WEIGHTS, as_of=as_of)
+        n_dates = export.merge_history(table, path, "t")
+    rows = json.loads(open(path, encoding="utf-8").read())["rows"]
+    assert n_dates == 2
+    assert len(rows) == 2 * len(INDUSTRIES)
+
+    export.merge_history(table, path, "t", keep_dates=1)
+    rows = json.loads(open(path, encoding="utf-8").read())["rows"]
+    assert {r["market_date"] for r in rows} == {"2026-10-16"}
