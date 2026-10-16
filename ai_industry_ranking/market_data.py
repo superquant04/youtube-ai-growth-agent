@@ -6,7 +6,7 @@ market_data.py
 - fetch_close_prices      : Yahoo Finance(yfinance)에서 일별 종가를 한 번에 일괄 수집
                             (장중에는 마지막 행이 당일 실시간 가격, 약 15분 지연)
 - build_industry_indices  : 산업별 ETF/바스켓을 하나의 지수 시계열로 합성
-- compute_market_metrics  : 반전 판단에 쓰는 수익률·낙폭·이동평균 지표 계산
+- compute_market_metrics  : 남은 반전·주가 반영도 계산에 쓰는 지표 (고점까지 거리, 상대수익률, 저점 대비 반등)
 """
 
 import math
@@ -17,7 +17,7 @@ import pandas as pd
 from ai_industry_ranking.industries import BENCHMARK_ID, BENCHMARK_TICKER, INDUSTRIES
 
 # 거래일 기준 기간
-W1D, W1M, W3M, W12M, W2Y, W3Y = 1, 21, 63, 252, 504, 756
+W12M, W2Y, W3Y = 252, 504, 756
 MIN_HISTORY = 200  # 이보다 짧으면 장기 지표를 신뢰할 수 없어 산업을 제외
 
 
@@ -83,16 +83,14 @@ def _equal_weight_index(prices):
 
 def compute_market_metrics(index, benchmark=None, as_of=None):
     """
-    한 산업 지수의 반전 판단 지표를 계산합니다. as_of를 주면 그 시점까지의 데이터만 사용합니다.
+    한 산업 지수의 점수 계산용 지표를 계산합니다. as_of를 주면 그 시점까지의 데이터만 사용합니다.
 
     반환 키
-    - ret_1d/1m/3m/12m : 기간 수익률
-    - rel_3m/12m/2y    : 벤치마크(SPY) 대비 상대 수익률
-    - drawdown_3y      : 3년 고점 대비 낙폭 (<= 0)
-    - upside_to_high   : 3년 고점을 되찾으려면 남은 상승률 (>= 0, 앞으로 남은 반전의 크기)
-    - rebound_52w      : 52주 저점 대비 반등폭
-    - ma50_gap/ma200_gap : 이동평균 대비 괴리율
-    - accel            : 최근 3개월 수익률 - 최근 1년 평균 분기 수익률 (양수면 상승 가속 = 추세 전환 신호)
+    - upside_to_high : 3년 고점을 되찾으려면 남은 상승률 (>= 0)      -> 남은 반전 점수
+    - rel_2y         : 2년간 벤치마크(SPY) 대비 상대 수익률           -> 남은 반전 점수
+    - rel_12m        : 1년간 SPY 대비 상대 수익률                     -> 주가 반영도
+    - rebound_52w    : 52주 저점 대비 반등폭                          -> 주가 반영도
+    - drawdown_3y    : 3년 고점 대비 낙폭 (<= 0, 표시용)
     """
     s = index.dropna()
     if as_of is not None:
@@ -107,25 +105,14 @@ def compute_market_metrics(index, benchmark=None, as_of=None):
         b = benchmark.reindex(s.index).ffill()
 
     last = s.iloc[-1]
-    for key, n in (("ret_1d", W1D), ("ret_1m", W1M), ("ret_3m", W3M), ("ret_12m", W12M), ("ret_2y", W2Y)):
-        metrics[key] = _period_return(s, n)
-
     if b is not None:
-        for key, n in (("rel_3m", W3M), ("rel_12m", W12M), ("rel_2y", W2Y)):
+        for key, n in (("rel_12m", W12M), ("rel_2y", W2Y)):
             metrics[key] = _relative_return(_period_return(s, n), _period_return(b, n))
 
     high_3y = s.iloc[-W3Y:].max()
     metrics["drawdown_3y"] = last / high_3y - 1
     metrics["upside_to_high"] = high_3y / last - 1
     metrics["rebound_52w"] = last / s.iloc[-W12M:].min() - 1
-    metrics["ma50_gap"] = last / s.iloc[-50:].mean() - 1
-    metrics["ma200_gap"] = last / s.iloc[-200:].mean() - 1
-    metrics["ma50_above_ma200"] = bool(s.iloc[-50:].mean() > s.iloc[-200:].mean())
-
-    ret_3m, ret_12m = metrics["ret_3m"], metrics["ret_12m"]
-    if not (_isnan(ret_3m) or _isnan(ret_12m)):
-        metrics["accel"] = ret_3m - ((1 + ret_12m) ** 0.25 - 1)
-
     return metrics
 
 

@@ -1,8 +1,8 @@
 """
 scoring.py
 
-"AI 상승 반전 점수" 계산. 이미 일어난 상승(모멘텀·뉴스 열기)은 점수에서 빼고,
-앞으로 남은 몫만 두 가지 구성요소(0~100점)로 평가해 가중 평균합니다.
+"AI 상승 반전 점수" 계산. 이미 일어난 상승은 빼고 앞으로 남은 몫만
+두 가지 구성요소(0~100점)로 평가해 가중 평균합니다. 다른 구성요소는 없습니다.
 
 | 구성요소            | 의미                                        | 계산                                                        |
 |---------------------|---------------------------------------------|-------------------------------------------------------------|
@@ -31,25 +31,8 @@ DEFAULT_WEIGHTS = {
     "unpriced": 50,
 }
 
-# 반전 국면 판정 기준 (점수에는 들어가지 않는 참고 정보, 절대값 규칙)
-DEPRESSED_DRAWDOWN = -0.15   # 3년 고점 대비 -15% 이하
-DEPRESSED_REL_2Y = -0.15     # 2년간 SPY 대비 -15%p 이상 부진
-TRENDING_RET_12M = 0.15      # 1년 +15% 이상 상승
-
-PHASES = {
-    "reversing": "🔥 반전 진행",
-    "early": "🌱 반전 초기",
-    "bottoming": "⏳ 바닥 탐색",
-    "trending": "🚀 상승 추세",
-    "neutral": "➖ 횡보",
-    "no_data": "❔ 데이터 부족",
-}
-
-# 랭킹 테이블에 함께 싣는 시장 지표
-METRIC_COLUMNS = (
-    "upside_to_high", "drawdown_3y", "rel_2y", "rel_12m", "rebound_52w",
-    "ret_1d", "ret_1m", "ret_3m", "ret_12m", "last_date",
-)
+# 랭킹 테이블에 함께 싣는 시장 지표 (두 구성요소의 입력값)
+METRIC_COLUMNS = ("upside_to_high", "drawdown_3y", "rel_2y", "rel_12m", "rebound_52w", "last_date")
 
 
 def percentile_score(values, higher_is_better=True):
@@ -115,38 +98,10 @@ def compute_total(components, weights):
     return total, contrib, active
 
 
-def classify_phase(m):
-    """시장 지표 dict/Series로 반전 국면을 판정합니다 (참고용 표시, 점수에는 미반영)."""
-    def g(key):
-        v = m.get(key, np.nan) if hasattr(m, "get") else np.nan
-        return np.nan if v is None else v
-
-    drawdown, rel_2y = g("drawdown_3y"), g("rel_2y")
-    ret_1m, ma50_gap, accel, ret_12m = g("ret_1m"), g("ma50_gap"), g("accel"), g("ret_12m")
-    if all(pd.isna(x) for x in (drawdown, ret_1m, ma50_gap)):
-        return "no_data"
-
-    depressed = (drawdown <= DEPRESSED_DRAWDOWN) or (rel_2y <= DEPRESSED_REL_2Y)
-    turning = (ma50_gap > 0) and (ret_1m > 0) and (accel > 0)
-    lifting = (ma50_gap > 0) or (ret_1m > 0)
-    golden = m.get("ma50_above_ma200", False)
-    trending = (not pd.isna(golden)) and bool(golden) and (ret_12m >= TRENDING_RET_12M)
-
-    if depressed and turning:
-        return "reversing"
-    if depressed and lifting:
-        return "early"
-    if depressed:
-        return "bottoming"
-    if trending:
-        return "trending"
-    return "neutral"
-
-
 def rank_industries(metrics, ai_leverage, weights):
     """
     최종 랭킹 테이블. index=산업 id, 총점 내림차순 정렬.
-    columns: rank, total_score, 구성요소 점수, contrib_*, ai_leverage, priced_in, phase, 주요 시장 지표
+    columns: rank, total_score, 구성요소 점수, contrib_*, ai_leverage, priced_in, 입력 시장 지표
     """
     table = compute_components(metrics, ai_leverage)
     total, contrib, active = compute_total(table, weights)
@@ -156,7 +111,6 @@ def rank_industries(metrics, ai_leverage, weights):
         table[f"contrib_{c}"] = contrib[c]
 
     m = metrics.reindex(table.index)
-    table["phase"] = [classify_phase(m.loc[i]) for i in table.index]
     for key in METRIC_COLUMNS:
         table[key] = m[key] if key in m.columns else np.nan
 

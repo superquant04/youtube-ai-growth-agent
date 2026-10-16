@@ -1,7 +1,6 @@
 name: AI Industry Reversal Ranking
 
 # 평일 미국 장 마감 후 UTC 21:30 (= KST 다음날 오전 6:30)에 랭킹 스냅샷을 수집해 순위 히스토리를 쌓습니다.
-# 대시보드 산업 상세의 참고용 AI 뉴스 추이(GDELT, 약 2~3분 소요)도 함께 갱신합니다. 뉴스는 점수에 들어가지 않습니다.
 on:
   schedule:
     - cron: "30 21 * * 1-5"
@@ -30,8 +29,8 @@ jobs:
       - name: 의존성 설치
         run: pip install -r requirements.txt
 
-      - name: 시장 데이터 수집 및 랭킹 계산 (+ 참고용 뉴스 추이)
-        run: python -m ai_industry_ranking.collect --refresh-news
+      - name: 시장 데이터 수집 및 랭킹 계산
+        run: python -m ai_industry_ranking.collect
 
       - name: 스냅샷 DB 커밋
         run: |

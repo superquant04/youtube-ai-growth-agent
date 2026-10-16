@@ -1,18 +1,17 @@
 """
 ranking.py
 
-수집(market_data, news_data) -> 점수화(scoring) -> 저장(storage)을 잇는 오케스트레이션 계층.
+수집(market_data) -> 점수화(scoring) -> 저장(storage)을 잇는 오케스트레이션 계층.
 Streamlit 앱(industry_ranking_app.py)과 CLI(collect.py)가 공통으로 사용합니다.
 
-점수는 시장 데이터와 AI 잠재력 가정치만으로 계산합니다.
-GDELT 뉴스는 산업 상세 화면의 참고 정보로만 쓰이며 점수에는 들어가지 않습니다.
+점수는 남은 반전 점수와 주가 미반영 점수 두 가지로만 계산합니다.
 """
 
 import numpy as np
 import pandas as pd
 
-from ai_industry_ranking import market_data, news_data, scoring, storage
-from ai_industry_ranking.industries import INDUSTRIES, INDUSTRY_BY_ID, all_tickers, build_news_query
+from ai_industry_ranking import market_data, scoring
+from ai_industry_ranking.industries import INDUSTRIES, INDUSTRY_BY_ID, all_tickers
 
 
 def default_ai_leverage():
@@ -57,7 +56,6 @@ def build_ranking(indices, weights, ai_leverage=None, as_of=None, compare_days=5
 
     table["name"] = [INDUSTRY_BY_ID[i].name for i in table.index]
     table["tickers"] = [INDUSTRY_BY_ID[i].ticker_label for i in table.index]
-    table["phase_label"] = table["phase"].map(scoring.PHASES)
 
     table.attrs["as_of"] = as_of
     table.attrs["prev_as_of"] = prev_as_of
@@ -68,43 +66,3 @@ def _rank_at(indices, weights, ai_leverage, as_of):
     metrics = market_data.compute_all_metrics(indices, as_of=as_of)
     return scoring.rank_industries(metrics, ai_leverage, weights)
 
-
-def refresh_news(industries=INDUSTRIES, progress_cb=None, db_file=None):
-    """
-    전 산업의 GDELT 뉴스 시계열(참고 정보)을 새로 받아 DB에 저장합니다 (요청 제한으로 산업당 약 5.5초).
-    반환: ({산업 id: Series}, {산업 id: 오류 메시지})
-    """
-    storage.init_db(db_file)
-    series, errors = {}, {}
-    for i, ind in enumerate(industries):
-        if progress_cb:
-            progress_cb(i, len(industries), ind)
-        query = build_news_query(ind)
-        try:
-            s = news_data.fetch_news_timeline(query)
-        except news_data.NewsFetchError as e:
-            errors[ind.id] = str(e)
-            continue
-        series[ind.id] = s
-        if len(s):
-            storage.save_news_timeline(ind.id, query, s, db_file=db_file)
-    if progress_cb:
-        progress_cb(len(industries), len(industries), None)
-    return series, errors
-
-
-def load_cached_news(db_file=None):
-    """
-    DB에 캐시된 뉴스 시계열을 불러옵니다. 산업 정의의 쿼리가 바뀐 캐시는 무시합니다.
-    반환: ({산업 id: Series}, 가장 오래된 수집 시각 ISO 문자열 또는 None)
-    """
-    storage.init_db(db_file)
-    cached = storage.load_news_timelines(db_file)
-    series, fetched = {}, []
-    for iid, (fetched_at, query, s) in cached.items():
-        ind = INDUSTRY_BY_ID.get(iid)
-        if ind is None or query != build_news_query(ind):
-            continue
-        series[iid] = s
-        fetched.append(fetched_at)
-    return series, (min(fetched) if fetched else None)

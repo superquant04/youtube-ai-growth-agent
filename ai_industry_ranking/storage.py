@@ -1,10 +1,9 @@
 """
 storage.py
 
-랭킹 스냅샷과 GDELT 뉴스 캐시를 저장하는 SQLite 저장소.
+랭킹 스냅샷을 저장하는 SQLite 저장소.
 
-1. news_timelines     -> 산업별 최신 뉴스 비중 시계열 (참고 정보, GDELT 요청 제한 때문에 캐시해서 재사용)
-2. ranking_snapshots  -> 랭킹 계산 결과 누적 (순위 변화 히스토리 차트용)
+- ranking_snapshots  -> 랭킹 계산 결과 누적 (순위 변화 히스토리 차트용)
 
 DB 경로는 환경변수 INDUSTRY_RANKING_DB로 바꿀 수 있습니다.
 """
@@ -13,7 +12,6 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from io import StringIO
 
 import pandas as pd
 
@@ -23,8 +21,8 @@ DB_FILE = os.getenv(
 )
 
 SNAPSHOT_COLUMNS = [
-    "rank", "total_score", "remaining_reversal", "unpriced", "ai_leverage", "priced_in",
-    "phase", "upside_to_high", "rel_2y", "rel_12m", "rebound_52w", "ret_1m",
+    "rank", "total_score", "remaining_reversal", "unpriced",
+    "upside_to_high", "rel_2y", "ai_leverage", "priced_in", "rel_12m", "rebound_52w",
 ]
 
 
@@ -43,14 +41,6 @@ def init_db(db_file=None):
     """테이블이 없으면 생성합니다 (여러 번 호출해도 안전)."""
     with get_connection(db_file) as conn:
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS news_timelines (
-                industry_id TEXT PRIMARY KEY,
-                fetched_at TEXT NOT NULL,
-                query TEXT NOT NULL,
-                timeline_json TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
             CREATE TABLE IF NOT EXISTS ranking_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT NOT NULL,
@@ -61,14 +51,12 @@ def init_db(db_file=None):
                 total_score REAL,
                 remaining_reversal REAL,
                 unpriced REAL,
-                ai_leverage REAL,
-                priced_in REAL,
-                phase TEXT,
                 upside_to_high REAL,
                 rel_2y REAL,
+                ai_leverage REAL,
+                priced_in REAL,
                 rel_12m REAL,
-                rebound_52w REAL,
-                ret_1m REAL
+                rebound_52w REAL
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_created ON ranking_snapshots(created_at)")
@@ -76,30 +64,6 @@ def init_db(db_file=None):
 
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def save_news_timeline(industry_id, query, series, fetched_at=None, db_file=None):
-    """산업별 최신 뉴스 시계열 1건만 유지합니다 (덮어쓰기)."""
-    payload = series.copy()
-    payload.index = payload.index.strftime("%Y-%m-%d")
-    with get_connection(db_file) as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO news_timelines (industry_id, fetched_at, query, timeline_json) VALUES (?, ?, ?, ?)",
-            (industry_id, fetched_at or utc_now_iso(), query, payload.to_json()),
-        )
-
-
-def load_news_timelines(db_file=None):
-    """{industry_id: (fetched_at, query, Series)}"""
-    with get_connection(db_file) as conn:
-        rows = conn.execute("SELECT industry_id, fetched_at, query, timeline_json FROM news_timelines").fetchall()
-
-    result = {}
-    for r in rows:
-        s = pd.read_json(StringIO(r["timeline_json"]), typ="series")
-        s.index = pd.to_datetime(s.index)
-        result[r["industry_id"]] = (r["fetched_at"], r["query"], s.sort_index().astype(float))
-    return result
 
 
 def save_ranking_snapshot(table, industry_names, created_at=None, db_file=None):

@@ -8,9 +8,9 @@ pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 from ai_industry_ranking import market_data, ranking, storage  # noqa: E402
-from ai_industry_ranking.industries import INDUSTRIES, build_news_query  # noqa: E402
+from ai_industry_ranking.industries import INDUSTRIES  # noqa: E402
 from ai_industry_ranking.scoring import DEFAULT_WEIGHTS  # noqa: E402
-from ai_industry_ranking.tests.fixtures import synthetic_close, synthetic_news  # noqa: E402
+from ai_industry_ranking.tests.fixtures import synthetic_close  # noqa: E402
 
 APP_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "industry_ranking_app.py")
 
@@ -55,15 +55,19 @@ def test_app_renders_ranking(app_env):
     assert len(at.dataframe) >= 2
 
 
-def test_app_renders_with_cached_news_and_history(app_env):
-    news = synthetic_news()
-    for ind in INDUSTRIES:
-        storage.save_news_timeline(ind.id, build_news_query(ind), news[ind.id])
+def test_app_shows_only_two_components(app_env):
+    at = run_app()
+    assert [s.label for s in at.slider] == ["남은 반전 점수", "주가 미반영 점수"]
+    page = " ".join(m.value for m in at.markdown) + " ".join(c.value for c in at.caption)
+    for removed in ("국면", "뉴스", "GDELT", "모멘텀 반영"):
+        assert removed not in page.replace("뉴스 열기", ""), removed
+
+
+def test_app_renders_history(app_env):
     table = ranking.build_ranking(app_env, DEFAULT_WEIGHTS)
     storage.save_ranking_snapshot(table, {i.id: i.name for i in INDUSTRIES})
 
     at = run_app()
-    assert any("참고" in m.value and "뉴스 비중 추이" in m.value for m in at.markdown)
     assert any("순위 추이" in m.value for m in at.markdown)
 
 
